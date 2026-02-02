@@ -9,6 +9,7 @@ pub struct Transfer {
     pub status: String,
     pub created_at: String,
     pub listing_complete: bool,
+    pub exclude_patterns: Option<String>,
 }
 
 #[derive(Debug)]
@@ -37,7 +38,8 @@ impl Db {
                 port INTEGER NOT NULL,
                 status TEXT NOT NULL,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                listing_complete BOOLEAN DEFAULT 0
+                listing_complete BOOLEAN DEFAULT 0,
+                exclude_patterns TEXT
             )",
             [],
         )?;
@@ -48,6 +50,7 @@ impl Db {
             "ALTER TABLE history ADD COLUMN listing_complete BOOLEAN DEFAULT 0",
             [],
         );
+        let _ = conn.execute("ALTER TABLE history ADD COLUMN exclude_patterns TEXT", []);
         // Optimize performance
         let _: String = conn.query_row("PRAGMA journal_mode=WAL;", [], |row| row.get(0))?;
         conn.execute("PRAGMA synchronous=NORMAL;", [])?;
@@ -55,10 +58,16 @@ impl Db {
         Ok(Db { conn })
     }
 
-    pub fn add_transfer(&self, path: &str, ip: &str, port: u16) -> Result<i64> {
+    pub fn add_transfer(
+        &self,
+        path: &str,
+        ip: &str,
+        port: u16,
+        exclude_patterns: Option<String>,
+    ) -> Result<i64> {
         self.conn.execute(
-            "INSERT INTO history (path, ip, port, status, listing_complete) VALUES (?1, ?2, ?3, ?4, 0)",
-            params![path, ip, port, "Pending"],
+            "INSERT INTO history (path, ip, port, status, listing_complete, exclude_patterns) VALUES (?1, ?2, ?3, ?4, 0, ?5)",
+            params![path, ip, port, "Pending", exclude_patterns],
         )?;
         Ok(self.conn.last_insert_rowid())
     }
@@ -79,6 +88,14 @@ impl Db {
         Ok(())
     }
 
+    pub fn update_excludes(&self, id: i64, patterns: String) -> Result<()> {
+        self.conn.execute(
+            "UPDATE history SET exclude_patterns = ?2 WHERE id = ?1",
+            params![id, patterns],
+        )?;
+        Ok(())
+    }
+
     pub fn delete_transfer(&self, id: i64) -> Result<()> {
         self.conn
             .execute("DELETE FROM history WHERE id = ?1", params![id])?;
@@ -87,7 +104,7 @@ impl Db {
 
     pub fn list_transfers(&self) -> Result<Vec<Transfer>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, path, ip, port, status, created_at, listing_complete FROM history ORDER BY id DESC",
+            "SELECT id, path, ip, port, status, created_at, listing_complete, exclude_patterns FROM history ORDER BY id DESC",
         )?;
         let transfer_iter = stmt.query_map([], |row| {
             Ok(Transfer {
@@ -98,6 +115,7 @@ impl Db {
                 status: row.get(4)?,
                 created_at: row.get(5)?,
                 listing_complete: row.get(6)?,
+                exclude_patterns: row.get(7).ok(),
             })
         })?;
 
@@ -110,7 +128,7 @@ impl Db {
 
     pub fn get_transfer(&self, id: i64) -> Result<Transfer> {
         self.conn.query_row(
-            "SELECT id, path, ip, port, status, created_at, listing_complete FROM history WHERE id = ?1",
+            "SELECT id, path, ip, port, status, created_at, listing_complete, exclude_patterns FROM history WHERE id = ?1",
             params![id],
             |row| {
                 Ok(Transfer {
@@ -121,6 +139,7 @@ impl Db {
                     status: row.get(4)?,
                     created_at: row.get(5)?,
                     listing_complete: row.get(6)?,
+                    exclude_patterns: row.get(7).ok(),
                 })
             },
         )
@@ -195,6 +214,15 @@ impl TransferLog {
                 status: row.get(4)?,
             })
         })?;
+
+        // Wait, original FileRecord struct:
+        // pub struct FileRecord {
+        //     pub id: i64,
+        //     pub relative_path: String,
+        //     pub size: u64,
+        //     pub is_dir: bool,
+        //     pub status: String,
+        // }
 
         let mut files = Vec::new();
         for r in rows {

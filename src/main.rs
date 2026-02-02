@@ -18,13 +18,25 @@ async fn main() -> Result<()> {
         Commands::Serve { path, port } => {
             server::run_server(path, port).await?;
         }
-        Commands::Push { path, ip, port } => {
+        Commands::Push {
+            path,
+            ip,
+            port,
+            exclude,
+        } => {
             let abs_path = std::fs::canonicalize(&path).unwrap_or(path.clone());
-            let id = db.add_transfer(&abs_path.to_string_lossy(), &ip, port)?;
+
+            let exclude_json = if !exclude.is_empty() {
+                Some(serde_json::to_string(&exclude)?)
+            } else {
+                None
+            };
+
+            let id = db.add_transfer(&abs_path.to_string_lossy(), &ip, port, exclude_json)?;
             println!("Transfer started with ID: {}", id);
 
             let log = db::TransferLog::new(id)?;
-            client::scan_files(abs_path.clone(), &log).await?;
+            client::scan_files(abs_path.clone(), &log, &exclude).await?;
             db.set_listing_complete(id, true)?;
 
             match client::send_pending_files(abs_path, ip, port, &log).await {
@@ -34,7 +46,7 @@ async fn main() -> Result<()> {
                 }
                 Err(e) => {
                     db.update_status(id, "Failed")?;
-                    eprintln!("Transfer failed: {}", e);
+                    eprintln!("\nTransfer failed: {}", e);
                 }
             }
         }
@@ -51,14 +63,29 @@ async fn main() -> Result<()> {
                 );
             }
         }
-        Commands::Resume { id } => {
+        Commands::Resume { id, exclude } => {
             let transfer = db.get_transfer(id)?;
+
+            // Determine exclude patterns
+            // If provided in CLI -> use them and update DB
+            // If not provided -> use from DB
+            let mut final_excludes = exclude;
+            if !final_excludes.is_empty() {
+                db.update_excludes(id, serde_json::to_string(&final_excludes)?)?;
+                println!("Updated exclude patterns: {:?}", final_excludes);
+            } else if let Some(json) = transfer.exclude_patterns {
+                final_excludes = serde_json::from_str(&json).unwrap_or_default();
+                if !final_excludes.is_empty() {
+                    println!("Using exclude patterns from history: {:?}", final_excludes);
+                }
+            }
+
             let log = db::TransferLog::new(id)?;
             let path = std::path::PathBuf::from(transfer.path);
 
             if !transfer.listing_complete {
                 println!("Listing was incomplete. Resuming scan...");
-                client::scan_files(path.clone(), &log).await?;
+                client::scan_files(path.clone(), &log, &final_excludes).await?;
                 db.set_listing_complete(id, true)?;
             } else {
                 println!("Listing complete. Checking pending files...");
@@ -71,13 +98,25 @@ async fn main() -> Result<()> {
                 }
                 Err(e) => {
                     // Keep status properly? status is just string.
-                    eprintln!("Transfer interrupted/failed: {}", e);
+                    eprintln!("\nTransfer interrupted/failed: {}", e);
                 }
             }
         }
-        Commands::Restart { id } => {
+        Commands::Restart { id, exclude } => {
             let transfer = db.get_transfer(id)?;
             println!("Restarting transfer ID: {}", id);
+
+            // Same logic as Resume
+            let mut final_excludes = exclude;
+            if !final_excludes.is_empty() {
+                db.update_excludes(id, serde_json::to_string(&final_excludes)?)?;
+                println!("Updated exclude patterns: {:?}", final_excludes);
+            } else if let Some(json) = transfer.exclude_patterns {
+                final_excludes = serde_json::from_str(&json).unwrap_or_default();
+                if !final_excludes.is_empty() {
+                    println!("Using exclude patterns from history: {:?}", final_excludes);
+                }
+            }
 
             let log = db::TransferLog::new(id)?;
             log.reset()?;
@@ -86,7 +125,7 @@ async fn main() -> Result<()> {
 
             let path = std::path::PathBuf::from(transfer.path);
 
-            client::scan_files(path.clone(), &log).await?;
+            client::scan_files(path.clone(), &log, &final_excludes).await?;
             db.set_listing_complete(id, true)?;
 
             match client::send_pending_files(path, transfer.ip, transfer.port, &log).await {
@@ -96,7 +135,7 @@ async fn main() -> Result<()> {
                 }
                 Err(e) => {
                     db.update_status(id, "Failed")?;
-                    eprintln!("Transfer failed: {}", e);
+                    eprintln!("\nTransfer failed: {}", e);
                 }
             }
         }

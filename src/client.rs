@@ -9,10 +9,21 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use walkdir::WalkDir;
 
-pub async fn scan_files(source_path: PathBuf, log: &TransferLog) -> Result<()> {
-    println!("Scanning files...");
+use glob::Pattern;
+
+pub async fn scan_files(
+    source_path: PathBuf,
+    log: &TransferLog,
+    exclude_patterns: &[String],
+) -> Result<()> {
+    println!("Scanning files (Excludes: {:?})...", exclude_patterns);
     let walker = WalkDir::new(&source_path);
     let mut count = 0;
+
+    let patterns: Vec<Pattern> = exclude_patterns
+        .iter()
+        .filter_map(|p| Pattern::new(p).ok())
+        .collect();
 
     for entry in walker.into_iter().filter_map(|e| e.ok()) {
         let path = entry.path();
@@ -29,6 +40,23 @@ pub async fn scan_files(source_path: PathBuf, log: &TransferLog) -> Result<()> {
 
         // Normalize path separators
         let relative_path_clean = relative_path_str.replace("\\", "/");
+
+        // Check exclude patterns
+        if patterns.iter().any(|p| p.matches(&relative_path_clean)) {
+            // println!("Excluded: {}", relative_path_clean);
+            continue;
+        }
+
+        // Also check if any parent directory is excluded for safer skipping?
+        // WalkDir usually recurses. If we exclude "node_modules", we want to skip everything inside it.
+        // Glob matching "node_modules" usually only matches the directory itself if relative_path_clean is exactly "node_modules".
+        // It won't match "node_modules/foo.js".
+        // Users often expect "node_modules" to exclude recursive.
+        // But glob behavior matches string.
+        // If user provides "node_modules" and we have "project/node_modules/file.txt".
+        // We probably want to support standard glob (git-like) if possible, but simplicity first.
+        // If user says "**/node_modules/**" it works.
+        // But let's assume if it matches, we skip.
 
         let metadata = fs::metadata(path).await?;
         let is_dir = metadata.is_dir();

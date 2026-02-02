@@ -25,6 +25,9 @@ pub enum Commands {
         ip: String,
         /// Target Port
         port: u16,
+        /// Patterns to exclude (e.g. "*.git", "node_modules")
+        #[arg(short, long)]
+        exclude: Vec<String>,
     },
     /// List transfer history
     List,
@@ -32,11 +35,17 @@ pub enum Commands {
     Resume {
         /// ID of the transfer to resume
         id: i64,
+        /// Update exclude patterns
+        #[arg(short, long)]
+        exclude: Vec<String>,
     },
     /// Restart a transfer (re-scan and re-send)
     Restart {
         /// ID of the transfer to restart
         id: i64,
+        /// Update exclude patterns
+        #[arg(short, long)]
+        exclude: Vec<String>,
     },
     /// Remove a transfer history
     Remove {
