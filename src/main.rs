@@ -39,7 +39,7 @@ async fn main() -> Result<()> {
             client::scan_files(abs_path.clone(), &log, &exclude).await?;
             db.set_listing_complete(id, true)?;
 
-            match client::send_pending_files(abs_path, ip, port, &log).await {
+            match client::send_pending_files(abs_path, ip, port, &log, &exclude).await {
                 Ok(_) => {
                     db.update_status(id, "Completed")?;
                     println!("Transfer completed successfully.");
@@ -91,7 +91,15 @@ async fn main() -> Result<()> {
                 println!("Listing complete. Checking pending files...");
             }
 
-            match client::send_pending_files(path, transfer.ip, transfer.port, &log).await {
+            match client::send_pending_files(
+                path,
+                transfer.ip,
+                transfer.port,
+                &log,
+                &final_excludes,
+            )
+            .await
+            {
                 Ok(_) => {
                     db.update_status(id, "Completed")?;
                     println!("Transfer resumed and completed.");
@@ -128,7 +136,15 @@ async fn main() -> Result<()> {
             client::scan_files(path.clone(), &log, &final_excludes).await?;
             db.set_listing_complete(id, true)?;
 
-            match client::send_pending_files(path, transfer.ip, transfer.port, &log).await {
+            match client::send_pending_files(
+                path,
+                transfer.ip,
+                transfer.port,
+                &log,
+                &final_excludes,
+            )
+            .await
+            {
                 Ok(_) => {
                     db.update_status(id, "Completed")?;
                     println!("Transfer restarted and completed.");

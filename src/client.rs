@@ -79,6 +79,7 @@ pub async fn send_pending_files(
     ip: String,
     port: u16,
     log: &TransferLog,
+    exclude_patterns: &[String],
 ) -> Result<()> {
     // Connect to server
     let addr = format!("{}:{}", ip, port);
@@ -92,6 +93,12 @@ pub async fn send_pending_files(
         println!("No pending files to send.");
         return Ok(());
     }
+
+    // Compile patterns for filtering
+    let patterns: Vec<Pattern> = exclude_patterns
+        .iter()
+        .filter_map(|p| Pattern::new(p).ok())
+        .collect();
 
     let mut total_files_sent = log.count_total()? - log.count_pending()?;
     let mut total_skipped = log.count_skipped()?;
@@ -121,6 +128,14 @@ pub async fn send_pending_files(
         let root = source_path.parent().unwrap_or(Path::new("."));
         let file_path = root.join(&record.relative_path); // relative_path is DB path (forward slashes). Windows handles mixed? best to ensure.
         // On Windows join works fine with forward slash usually, but let's check.
+
+        // Check if excluded
+        if patterns.iter().any(|p| p.matches(&record.relative_path)) {
+            log.mark_skipped(&record.relative_path)?;
+            total_skipped += 1;
+            total_pending_size = total_pending_size.saturating_sub(record.size);
+            continue;
+        }
 
         if !file_path.exists() {
             eprintln!("\nWarning: File not found: {:?}, skipping.", file_path);
