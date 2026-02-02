@@ -100,8 +100,12 @@ pub async fn send_pending_files(
         .filter_map(|p| Pattern::new(p).ok())
         .collect();
 
-    let mut total_files_sent = log.count_total()? - log.count_pending()?;
+    // Stats
+    let total_files_count = log.count_total()?;
+    // processed_files includes Sent and Skipped files (basically anything NOT Pending initially)
+    let mut processed_files = total_files_count - log.count_pending()?;
     let mut total_skipped = log.count_skipped()?;
+
     let total_bytes_sent_from_log = log.get_total_sent_bytes()?; // Total bytes sent from previous sessions
     let mut current_total_bytes_sent = 0u64; // Bytes sent in this session
     let mut last_update = Instant::now();
@@ -113,35 +117,42 @@ pub async fn send_pending_files(
     let mut session_bytes_sent = 0u64;
 
     // Initial status
+    let initial_percent = if total_files_count > 0 {
+        (processed_files as f64 / total_files_count as f64) * 100.0
+    } else {
+        0.0
+    };
+
     print!(
-        "\rSending: Files: {}, Skipped: {}, Size: 0 B, ETA: --:--",
-        total_files_sent, total_skipped
+        "\rSending: [{:.1}%] Files: {}/{}, Skipped: {}, Size: 0 B, ETA: --:--",
+        initial_percent, processed_files, total_files_count, total_skipped
     );
     std::io::stdout().flush()?;
 
     for record in pending_files {
         // Construct absolute path
-        // source_path might be a file or folder.
-        // We recorded relative path from `source_path.parent()` (if dir) or filename (if file).
-        // If source_path was "d:/Projects/send", parent is "d:/Projects". relative is "send/..."
-        // So absolute path = parent.join(relative)
         let root = source_path.parent().unwrap_or(Path::new("."));
-        let file_path = root.join(&record.relative_path); // relative_path is DB path (forward slashes). Windows handles mixed? best to ensure.
-        // On Windows join works fine with forward slash usually, but let's check.
+        let file_path = root.join(&record.relative_path);
 
         // Check if excluded
         if patterns.iter().any(|p| p.matches(&record.relative_path)) {
             log.mark_skipped(&record.relative_path)?;
             total_skipped += 1;
+            processed_files += 1; // Count as processed
             total_pending_size = total_pending_size.saturating_sub(record.size);
             continue;
         }
 
         if !file_path.exists() {
             eprintln!("\nWarning: File not found: {:?}, skipping.", file_path);
-            // This file was pending, but now it's gone. We should remove its size from total_pending_size.
+            processed_files += 1; // Count as processed (failed/skipped)
+            // Should we mark as skipped in DB? Maybe better to skip implicitly or mark skipped.
+            // If we don't mark, it stays pending. Let's mark skipped to avoid infinite loop on restart.
+            // But logic "Should we mark as failed?" suggests maybe not.
+            // For progress bar consistency, we count it.
             total_pending_size = total_pending_size.saturating_sub(record.size);
-            continue; // Should we mark as failed?
+            log.mark_skipped(&record.relative_path)?; // Mark skipped to be safe
+            continue;
         }
 
         let is_dir = record.is_dir;
@@ -154,15 +165,20 @@ pub async fn send_pending_files(
             is_dir,
         };
 
-        // Update UI loop
-        if last_update.elapsed() >= update_interval {
+        // Update UI loop (Inner loop for large files or just pre-send update)
+        // We reuse the update logic block
+        let update_ui = |current_processed: u64,
+                         current_skipped: u64,
+                         session_bytes: u64,
+                         total_sent: u64|
+         -> Result<()> {
             let elapsed = start_time.elapsed().as_secs_f64();
             let rate = if elapsed > 0.0 {
-                session_bytes_sent as f64 / elapsed
+                session_bytes as f64 / elapsed
             } else {
                 0.0
             };
-            let remaining_bytes = total_pending_size.saturating_sub(session_bytes_sent);
+            let remaining_bytes = total_pending_size.saturating_sub(session_bytes);
             let eta_seconds = if rate > 0.0 {
                 remaining_bytes as f64 / rate
             } else {
@@ -181,15 +197,33 @@ pub async fn send_pending_files(
                 format!("{:.0}s", eta_seconds)
             };
 
+            let percent = if total_files_count > 0 {
+                (current_processed as f64 / total_files_count as f64) * 100.0
+            } else {
+                0.0
+            };
+
             print!(
-                "\rSending: Files: {}, Skipped: {}, Size: {} | ETA: {} | Current: {:.30}               ",
-                total_files_sent,
-                total_skipped,
-                format_size(total_bytes_sent_from_log + current_total_bytes_sent),
+                "\rSending: [{:.1}%] Files: {}/{}, Skipped: {}, Size: {} | ETA: {} | Current: {:.30}               ",
+                percent,
+                current_processed,
+                total_files_count,
+                current_skipped,
+                format_size(total_sent),
                 eta_str,
                 relative_path_clean
             );
             std::io::stdout().flush()?;
+            Ok(())
+        };
+
+        if last_update.elapsed() >= update_interval {
+            update_ui(
+                processed_files,
+                total_skipped,
+                session_bytes_sent,
+                total_bytes_sent_from_log + current_total_bytes_sent,
+            )?;
             last_update = Instant::now();
         }
 
@@ -212,17 +246,14 @@ pub async fn send_pending_files(
 
         match response {
             ServerResponse::Skip => {
-                // Server says skip
                 if !is_dir {
                     log.mark_skipped(&relative_path_clean)?;
                     total_skipped += 1;
-                    // This file was pending, but now it's skipped. We should remove its size from total_pending_size.
                     total_pending_size = total_pending_size.saturating_sub(size);
                 } else {
-                    // directory technically "sent"/processed
                     log.mark_sent(&relative_path_clean)?;
-                    // Directories don't have size, so no need to adjust total_pending_size for them.
                 }
+                processed_files += 1;
             }
             ServerResponse::Send => {
                 if !is_dir {
@@ -254,41 +285,12 @@ pub async fn send_pending_files(
                         file_sent += n as u64;
 
                         if last_update.elapsed() >= update_interval {
-                            let elapsed = start_time.elapsed().as_secs_f64();
-                            let rate = if elapsed > 0.0 {
-                                session_bytes_sent as f64 / elapsed
-                            } else {
-                                0.0
-                            };
-                            let remaining_bytes =
-                                total_pending_size.saturating_sub(session_bytes_sent);
-                            let eta_seconds = if rate > 0.0 {
-                                remaining_bytes as f64 / rate
-                            } else {
-                                0.0
-                            };
-
-                            let eta_str = if eta_seconds > 3600.0 {
-                                format!(
-                                    "{:.0}h {:.0}m",
-                                    eta_seconds / 3600.0,
-                                    (eta_seconds % 3600.0) / 60.0
-                                )
-                            } else if eta_seconds > 60.0 {
-                                format!("{:.0}m {:.0}s", eta_seconds / 60.0, eta_seconds % 60.0)
-                            } else {
-                                format!("{:.0}s", eta_seconds)
-                            };
-
-                            print!(
-                                "\rSending: Files: {}, Skipped: {}, Size: {} | ETA: {} | Current: {:.30}               ",
-                                total_files_sent,
+                            update_ui(
+                                processed_files,
                                 total_skipped,
-                                format_size(total_bytes_sent_from_log + current_total_bytes_sent),
-                                eta_str,
-                                relative_path_clean
-                            );
-                            std::io::stdout().flush()?;
+                                session_bytes_sent,
+                                total_bytes_sent_from_log + current_total_bytes_sent,
+                            )?;
                             last_update = Instant::now();
                         }
                     }
@@ -297,7 +299,7 @@ pub async fn send_pending_files(
                         return Err(anyhow!("Incomplete transfer: {}", relative_path_clean));
                     }
 
-                    total_files_sent += 1;
+                    processed_files += 1;
                     log.mark_sent(&relative_path_clean)?;
                 } else {
                     log.mark_sent(&relative_path_clean)?;
@@ -330,47 +332,17 @@ pub async fn send_pending_files(
                         session_bytes_sent += n as u64;
 
                         if last_update.elapsed() >= update_interval {
-                            // ... same UI update code ...
-                            let elapsed = start_time.elapsed().as_secs_f64();
-                            let rate = if elapsed > 0.0 {
-                                session_bytes_sent as f64 / elapsed
-                            } else {
-                                0.0
-                            };
-                            let remaining_bytes =
-                                total_pending_size.saturating_sub(session_bytes_sent);
-                            let eta_seconds = if rate > 0.0 {
-                                remaining_bytes as f64 / rate
-                            } else {
-                                0.0
-                            };
-
-                            let eta_str = if eta_seconds > 3600.0 {
-                                format!(
-                                    "{:.0}h {:.0}m",
-                                    eta_seconds / 3600.0,
-                                    (eta_seconds % 3600.0) / 60.0
-                                )
-                            } else if eta_seconds > 60.0 {
-                                format!("{:.0}m {:.0}s", eta_seconds / 60.0, eta_seconds % 60.0)
-                            } else {
-                                format!("{:.0}s", eta_seconds)
-                            };
-
-                            print!(
-                                "\rSending: Files: {}, Skipped: {}, Size: {} | ETA: {} | Current: {:.30}               ",
-                                total_files_sent,
+                            update_ui(
+                                processed_files,
                                 total_skipped,
-                                format_size(total_bytes_sent_from_log + current_total_bytes_sent),
-                                eta_str,
-                                relative_path_clean
-                            );
-                            std::io::stdout().flush()?;
+                                session_bytes_sent,
+                                total_bytes_sent_from_log + current_total_bytes_sent,
+                            )?;
                             last_update = Instant::now();
                         }
                     }
 
-                    total_files_sent += 1;
+                    processed_files += 1;
                     log.mark_sent(&relative_path_clean)?;
                 } else {
                     log.mark_sent(&relative_path_clean)?;
@@ -385,7 +357,7 @@ pub async fn send_pending_files(
     // Final update
     println!(
         "\rDone! Total Files: {}, Skipped: {}, Total Size: {}                                    ",
-        total_files_sent,
+        processed_files,
         total_skipped,
         format_size(total_bytes_sent_from_log + current_total_bytes_sent)
     );
