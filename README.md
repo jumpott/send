@@ -38,8 +38,13 @@ send serve "D:\BackupTarget" 8080
 #### 2. ฝั่งเครื่องส่ง (Client)
 **เริ่มส่งไฟล์ใหม่ (Push):**
 ```bash
-# รูปแบบ: send push <โฟลเดอร์ต้นทาง> <IP เครื่องรับ> <Port>
+# รูปแบบ: send push <โฟลเดอร์ต้นทาง> <IP เครื่องรับ> <Port> [Options]
 send push "C:\MyWork" 192.168.1.50 8080
+
+# ตัวอย่างแบบ Exclude ไฟล์/โฟลเดอร์ที่ไม่ต้องการ
+# ใช้ -e (หรือ --exclude) ได้หลายครั้ง
+# ** = หาในทุก subfolder
+send push "C:\MyWork" 192.168.1.50 8080 -e "**/.git/**" -e "**/node_modules/**" -e "*.tmp"
 ```
 
 **ดูรายการที่เคยส่ง (List):**
@@ -52,11 +57,18 @@ send list
 ```bash
 send resume 1
 ```
+*Tip: สามารถเพิ่ม/แก้ไขรายการ Exclude ตอน Resume ได้ (ระบบจะจำของใหม่แทนของเดิม)*
+```bash
+send resume 1 -e "**/node_modules/**"
+```
 
 **เริ่มส่งใหม่ทั้งหมด (Restart):**
 หากต้องการ Reset สถานะและบังคับส่งใหม่ทั้งหมดของ ID นั้น
 ```bash
 send restart 1
+
+# Restart แบบเปลี่ยน Exclude pattern
+send restart 1 -e "**/.git/**"
 ```
 
 **ลบประวัติการส่ง (Remove):**
@@ -74,6 +86,7 @@ send remove 1
 
 ### Key Features
 *   **Robust Resume**: Stop and resume transfers anytime. It intelligently skips completed files and only re-transmits what's pending or incomplete.
+*   **File Exclusion**: Support for filtering out unwanted files/folders (e.g., `node_modules`, `.git`) using glob patterns.
 *   **High Performance**: Tuned for maximum throughput on LAN.
     *   **TCP_NODELAY** enabled for low latency on small files.
     *   **1MB Buffer** for efficient large file streaming.
@@ -98,8 +111,13 @@ send serve "D:\BackupTarget" 8080
 #### 2. Sender (Client)
 **Start a new transfer (Push):**
 ```bash
-# Usage: send push <SourceFolder> <ReceiverIP> <Port>
+# Usage: send push <SourceFolder> <ReceiverIP> <Port> [Options]
 send push "C:\MyWork" 192.168.1.50 8080
+
+# Example with Excludes:
+# Use -e (or --exclude) multiple times.
+# ** = matches recursively in any subfolder
+send push "C:\MyWork" 192.168.1.50 8080 -e "**/.git/**" -e "**/node_modules/**" -e "*.log"
 ```
 
 **List transfer history (List):**
@@ -112,11 +130,18 @@ Pick up where you left off using the Transfer ID (find it using `list`).
 ```bash
 send resume 1
 ```
+*Tip: You can update exclude patterns during resume. The new patterns will replace the old ones matched against pending files.*
+```bash
+send resume 1 -e "**/node_modules/**"
+```
 
 **Force Restart (Restart):**
 Clear the progress log and re-send everything for a specific Transfer ID.
 ```bash
 send restart 1
+
+# Restart with new exclude patterns
+send restart 1 -e "**/.git/**"
 ```
 
 **Remove History (Remove):**
