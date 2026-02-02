@@ -1,8 +1,12 @@
 name: Rust
 
+permissions:
+  contents: write
+
 on:
   push:
     branches: [ "main" ]
+    tags: [ "v*" ]
   pull_request:
     branches: [ "main" ]
 
@@ -26,6 +30,7 @@ jobs:
     - name: Run tests
       run: cargo test --verbose --release
 
+    # Upload Artifacts (for checking in Actions tab)
     - name: Upload Artifact (Windows)
       if: matrix.os == 'windows-latest'
       uses: actions/upload-artifact@v4
@@ -39,3 +44,14 @@ jobs:
       with:
         name: send-linux
         path: target/release/send
+
+    # Create Release (Only when tag is pushed)
+    - name: Release
+      uses: softprops/action-gh-release@v1
+      if: startsWith(github.ref, 'refs/tags/')
+      with:
+        files: |
+          target/release/send.exe
+          target/release/send
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
