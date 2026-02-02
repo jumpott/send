@@ -100,6 +100,37 @@ async fn main() -> Result<()> {
                 }
             }
         }
+        Commands::Remove { id } => {
+            if db.get_transfer(id).is_err() {
+                eprintln!("Transfer ID {} not found.", id);
+                return Ok(());
+            }
+
+            print!(
+                "Are you sure you want to delete transfer ID {}? This will remove the history log. (y/N): ",
+                id
+            );
+            use std::io::Write;
+            std::io::stdout().flush()?;
+
+            let mut input = String::new();
+            std::io::stdin().read_line(&mut input)?;
+
+            if input.trim().eq_ignore_ascii_case("y") {
+                db.delete_transfer(id)?;
+
+                let log_file = format!("send_history_{}.db", id);
+                let log_path = std::path::Path::new(&log_file);
+                if log_path.exists() {
+                    std::fs::remove_file(log_path)?;
+                    let _ = std::fs::remove_file(format!("send_history_{}.db-wal", id));
+                    let _ = std::fs::remove_file(format!("send_history_{}.db-shm", id));
+                }
+                println!("Transfer ID {} removed.", id);
+            } else {
+                println!("Operation cancelled.");
+            }
+        }
     }
 
     Ok(())

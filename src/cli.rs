@@ -38,4 +38,9 @@ pub enum Commands {
         /// ID of the transfer to restart
         id: i64,
     },
+    /// Remove a transfer history
+    Remove {
+        /// ID of the transfer to remove
+        id: i64,
+    },
 }

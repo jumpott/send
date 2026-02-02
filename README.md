@@ -1,6 +1,6 @@
 # Send - เครื่องมือย้ายไฟล์ข้ามเครื่องความเร็วสูง (High-Performance Local File Transfer)
 
-โปรแกรมสำหรับส่งไฟล์จำนวนมากหรือโฟลเดอร์ขนาดใหญ่ผ่านเครือข่ายวงแลน (LAN) ถูกออกแบบมาเพื่อตอบโจทย์ **การย้ายข้อมูลไปคอมพิวเตอร์เครื่องใหม่** ที่ต้องการความเร็วสูงสุด ข้ามไฟล์เดิมได้ และกด Resume ได้เมื่อหลุด
+โปรแกรมสำหรับส่งไฟล์จำนวนมากหรือโฟลเดอร์ขนาดใหญ่ผ่านเครือข่ายวงแลน (LAN) ถูกออกแบบมาเพื่อตอบโจทย์ **การย้ายข้อมูลไปคอมพิวเตอร์เครื่องใหม่** ที่ต้องการความเร็วสูงสุด ข้ามไฟล์เดิมได้ และสั่ง Resume ได้เมื่อหลุด
 
 ---
 
@@ -26,14 +26,15 @@
 #### 1. ฝั่งเครื่องรับ (Server)
 รันคำสั่งเพื่อรอรับไฟล์ โดยระบุโฟลเดอร์ปลายทางและ Port
 ```bash
-send serve --path "D:\BackupTarget" --port 8080
+# รูปแบบ: send serve <โฟลเดอร์เก็บไฟล์> <Port>
+send serve "D:\BackupTarget" 8080
 ```
 
 #### 2. ฝั่งเครื่องส่ง (Client)
 **เริ่มส่งไฟล์ใหม่ (Push):**
 ```bash
-# รูปแบบ: send push --path <โฟลเดอร์ต้นทาง> --ip <IP เครื่องรับ> --port <Port>
-send push --path "C:\MyWork" --ip 192.168.1.50 --port 8080
+# รูปแบบ: send push <โฟลเดอร์ต้นทาง> <IP เครื่องรับ> <Port>
+send push "C:\MyWork" 192.168.1.50 8080
 ```
 
 **ดูรายการที่เคยส่ง (List):**
@@ -44,13 +45,19 @@ send list
 **ส่งต่อจากจุดเดิม (Resume):**
 หากการส่งหยุดชะงัก หรือปิดโปรแกรมไป สามารถ Resume ได้ด้วย ID (ดู ID จากคำสั่ง list)
 ```bash
-send resume --id 1
+send resume 1
 ```
 
 **เริ่มส่งใหม่ทั้งหมด (Restart):**
 หากต้องการ Reset สถานะและบังคับส่งใหม่ทั้งหมดของ ID นั้น
 ```bash
-send restart --id 1
+send restart 1
+```
+
+**ลบประวัติการส่ง (Remove):**
+ลบประวัติและไฟล์ log ของ ID นั้น (ต้องยืนยันการลบ)
+```bash
+send remove 1
 ```
 
 ---
@@ -79,14 +86,15 @@ This tool prioritizes speed and ease of use over security.
 #### 1. Receiver (Server)
 Start the server listening on a specific folder and port.
 ```bash
-send serve --path "D:\BackupTarget" --port 8080
+# Usage: send serve <TargetFolder> <Port>
+send serve "D:\BackupTarget" 8080
 ```
 
 #### 2. Sender (Client)
 **Start a new transfer (Push):**
 ```bash
-# Usage: send push --path <SourceFolder> --ip <ReceiverIP> --port <Port>
-send push --path "C:\MyWork" --ip 192.168.1.50 --port 8080
+# Usage: send push <SourceFolder> <ReceiverIP> <Port>
+send push "C:\MyWork" 192.168.1.50 8080
 ```
 
 **List transfer history (List):**
@@ -97,11 +105,17 @@ send list
 **Resume a transfer (Resume):**
 Pick up where you left off using the Transfer ID (find it using `list`).
 ```bash
-send resume --id 1
+send resume 1
 ```
 
 **Force Restart (Restart):**
 Clear the progress log and re-send everything for a specific Transfer ID.
 ```bash
-send restart --id 1
+send restart 1
+```
+
+**Remove History (Remove):**
+Delete transfer history and log files for a specific Transfer ID.
+```bash
+send remove 1
 ```

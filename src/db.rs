@@ -79,6 +79,12 @@ impl Db {
         Ok(())
     }
 
+    pub fn delete_transfer(&self, id: i64) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM history WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
     pub fn list_transfers(&self) -> Result<Vec<Transfer>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, path, ip, port, status, created_at, listing_complete FROM history ORDER BY id DESC",
