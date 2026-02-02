@@ -12,6 +12,7 @@ use db::Db;
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    println!("Send v{}", env!("CARGO_PKG_VERSION"));
     let db = Db::init()?;
 
     match cli.command {
